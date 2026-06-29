@@ -1,121 +1,227 @@
-# SpotSync API
+# SpotSync
 
-Smart Parking & EV Charging Reservation System built with Go, Echo, GORM, and PostgreSQL.
+A smart parking reservation API built with Go. Drivers can browse parking zones and make reservations, while admins manage zones and view all bookings — all secured with JWT auth and concurrency-safe booking logic.
+
+**Live URL:** _Deploy to Railway / Render and add your URL here_
+
+---
 
 ## Features
 
-- User authentication (register, login) with JWT and bcrypt
-- Role-based access control (driver, admin)
-- Parking zone management (CRUD for admins)
-- Public parking zone browsing with real-time availability
-- Reservation system with concurrency-safe booking using GORM transactions and row-level locking (`FOR UPDATE`)
-- Clean Architecture with layered separation (DTO, Handler, Service, Repository, Models)
+- User registration and login with bcrypt password hashing
+- JWT-based authentication with role claims (`driver`, `admin`)
+- Role-based access control via middleware
+- Parking zone CRUD (admin only) with zone types: `general`, `ev_charging`, `covered`
+- Real-time available spots calculation on every zone response
+- Reservation creation with row-level locking to prevent overbooking under concurrent load
+- Cancel own reservations (drivers) or view all reservations (admin)
+
+---
 
 ## Tech Stack
 
-- Go 1.25+
-- Echo v5
-- GORM with PostgreSQL
-- JWT v5
-- bcrypt
-- go-playground/validator
+| Layer | Technology |
+|---|---|
+| Language | Go 1.25+ |
+| HTTP Framework | Echo v5 |
+| ORM | GORM |
+| Database | PostgreSQL (NeonDB / Supabase / local) |
+| Authentication | JWT v5 + bcrypt |
+| Validation | go-playground/validator v10 |
+| Config | godotenv |
+
+---
 
 ## Architecture
 
+The project follows **Clean Architecture** with a domain-driven folder structure. Each domain (`user`, `parkingzone`, `reservation`) is fully self-contained.
+
 ```
-cmd/main.go                 -> Entry point
+cmd/
+└── main.go                  Entry point — wires config, DB, and server
+
 internal/
-  auth/                     -> JWT service
-  config/                   -> Environment & DB config
-  httpresponse/             -> Standardized JSON responses
-  middlewares/              -> Auth & Role middleware
-  server/                   -> HTTP server setup
-  domain/
-    user/                   -> Auth module
-    parkingzone/            -> Parking zones module
-    reservation/            -> Reservations module
+├── auth/
+│   └── jwt.go               JWT generation & validation (with role support)
+├── config/
+│   ├── config.go            Loads environment variables
+│   └── db.go                Connects to PostgreSQL via GORM, runs AutoMigrate
+├── httpresponse/
+│   └── response.go          Standardized JSON response helpers
+├── middlewares/
+│   └── auth.go              AuthMiddleware (JWT) and RoleMiddleware
+├── server/
+│   └── http.go              Echo server setup, validator wiring, route registration
+└── domain/
+    ├── user/                Auth module
+    ├── parkingzone/         Parking zones module
+    └── reservation/         Reservations module
 ```
 
-Each domain follows Clean Architecture:
-- **DTO** — Request/Response structures
-- **Handler** — HTTP layer, binds & validates input, returns JSON
-- **Service** — Business logic
-- **Repository** — GORM database operations
-- **Entity** — GORM models
+### How the layers interact
 
-## API Endpoints
+```
+HTTP Request
+     │
+     ▼
+  Handler          Binds & validates input, returns JSON response
+     │
+     ▼
+  Service          Business logic, error mapping, response building
+     │
+     ▼
+ Repository        GORM database queries
+     │
+     ▼
+  Entity           GORM model (maps to DB table)
+```
 
-### Authentication
-| Method | Endpoint | Access | Description |
-|--------|----------|--------|-------------|
-| POST | `/api/v1/auth/register` | Public | Register a new user |
-| POST | `/api/v1/auth/login` | Public | Login and get JWT token |
+Dependency injection is done manually in each domain's `register.go`, which wires the repository → service → handler chain and registers routes on the Echo instance.
 
-### Parking Zones
-| Method | Endpoint | Access | Description |
-|--------|----------|--------|-------------|
-| GET | `/api/v1/zones` | Public | List all zones with availability |
-| GET | `/api/v1/zones/:id` | Public | Get single zone details |
-| POST | `/api/v1/zones` | Admin | Create a new zone |
-| PUT | `/api/v1/zones/:id` | Admin | Update a zone |
-| DELETE | `/api/v1/zones/:id` | Admin | Delete a zone |
+### Concurrency Safety
 
-### Reservations
-| Method | Endpoint | Access | Description |
-|--------|----------|--------|-------------|
-| POST | `/api/v1/reservations` | Authenticated | Reserve a parking spot |
-| GET | `/api/v1/reservations/my-reservations` | Authenticated | View my reservations |
-| DELETE | `/api/v1/reservations/:id` | Authenticated | Cancel a reservation |
-| GET | `/api/v1/reservations` | Admin | View all reservations |
+Reservations use a **GORM transaction with `FOR UPDATE` row-level locking** on the parking zone row. This ensures that when two users simultaneously try to book the last spot, only one succeeds — the other gets a `409 Conflict`.
+
+```
+BeginTransaction
+  → Lock parking_zone row (FOR UPDATE)
+  → Count active reservations
+  → Check capacity
+  → Insert reservation (or return ErrZoneFull)
+CommitTransaction
+```
+
+---
 
 ## Setup (Local)
 
-1. **Clone the repository**
+### Prerequisites
 
-2. **Set up PostgreSQL** (local or cloud like NeonDB/Supabase)
+- [Go 1.21+](https://go.dev/dl)
+- PostgreSQL (local install, [NeonDB](https://neon.tech), or [Supabase](https://supabase.com))
 
-3. **Create `.env` file**
-   ```bash
-   cp .env.example .env
-   ```
-   Edit `.env` with your database credentials and JWT secret.
+### Steps
 
-4. **Install dependencies**
-   ```bash
-   go mod tidy
-   ```
+**1. Clone the repository**
+```bash
+git clone <your-repo-url>
+cd spotsync
+```
 
-5. **Run the server**
-   ```bash
-   go run cmd/main.go
-   ```
+**2. Create your `.env` file**
+```bash
+cp .env.example .env
+```
 
-   Or use Air for hot-reloading:
-   ```bash
-   air
-   ```
+**3. Fill in your environment variables** (see table below)
+
+**4. Download dependencies**
+```bash
+go mod tidy
+```
+
+**5. Run the server**
+```bash
+go run cmd/main.go
+```
+
+The server starts on `http://localhost:8080`. Tables are auto-migrated on startup.
+
+**Optional — hot reload with Air**
+```bash
+air
+```
+
+---
 
 ## Environment Variables
 
-| Variable | Description |
-|----------|-------------|
-| `PORT` | Server port (default: 8080) |
-| `DSN` | PostgreSQL connection string |
-| `JWT_SECRET` | Secret key for JWT signing |
+| Variable | Required | Description | Example |
+|---|---|---|---|
+| `PORT` | Yes | Port the server listens on | `8080` |
+| `DSN` | Yes | PostgreSQL connection string | `postgresql://user:pass@host/db?sslmode=require` |
+| `JWT_SECRET` | Yes | Secret key used to sign JWT tokens | `change-me-in-production` |
 
-## Concurrency Safety
+---
 
-The reservation system uses **GORM Transactions** combined with **Row-Level Locking (`FOR UPDATE`)** on the parking zone record to prevent race conditions when multiple users simultaneously try to book the last available spot.
+## API Endpoints
 
-```go
-db.Transaction(func(tx *gorm.DB) error {
-    // Lock the zone row
-    tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&zone, zoneID)
-    // Count active reservations
-    // Check capacity
-    // Create reservation atomically
-})
+Base URL: `http://localhost:8080/api/v1`
+
+All authenticated and admin endpoints require the `Authorization` header:
 ```
+Authorization: Bearer <token>
+```
+
+### Auth
+
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| `POST` | `/auth/register` | Public | Register a new user |
+| `POST` | `/auth/login` | Public | Login and receive a JWT token |
+
+**Register request body:**
+```json
+{
+  "name": "Jane Doe",
+  "email": "jane@example.com",
+  "password": "secret123",
+  "role": "driver"
+}
+```
+> `role` is optional — defaults to `driver`. Accepted values: `driver`, `admin`.
+
+**Login request body:**
+```json
+{
+  "email": "jane@example.com",
+  "password": "secret123"
+}
+```
+
+---
+
+### Parking Zones
+
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| `GET` | `/zones` | Public | List all zones with available spots |
+| `GET` | `/zones/:id` | Public | Get a single zone by ID |
+| `POST` | `/zones` | Admin | Create a new parking zone |
+| `PUT` | `/zones/:id` | Admin | Update an existing zone |
+| `DELETE` | `/zones/:id` | Admin | Delete a zone |
+
+**Create / Update zone request body:**
+```json
+{
+  "name": "Zone A",
+  "type": "general",
+  "total_capacity": 50,
+  "price_per_hour": 5.00
+}
+```
+> `type` accepted values: `general`, `ev_charging`, `covered`
+
+---
+
+### Reservations
+
+| Method | Endpoint | Access | Description |
+|---|---|---|---|
+| `POST` | `/reservations` | Authenticated | Reserve a parking spot |
+| `GET` | `/reservations/my-reservations` | Authenticated | View your own reservations |
+| `DELETE` | `/reservations/:id` | Authenticated | Cancel your reservation |
+| `GET` | `/reservations` | Admin | View all reservations |
+
+**Create reservation request body:**
+```json
+{
+  "zone_id": 1,
+  "license_plate": "DHK-1234"
+}
+```
+
+---
 
 ## License
 
