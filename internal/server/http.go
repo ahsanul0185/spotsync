@@ -3,7 +3,6 @@ package server
 import (
 	"fmt"
 	"net/http"
-	"spotsync/internal/auth"
 	"spotsync/internal/config"
 	"spotsync/internal/domain/parkingzone"
 	"spotsync/internal/domain/reservation"

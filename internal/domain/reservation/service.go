@@ -1,13 +1,14 @@
 package reservation
 
 import (
+	"errors"
 	"spotsync/internal/domain/parkingzone"
 	"spotsync/internal/domain/reservation/dto"
 	"spotsync/internal/domain/user"
 )
 
 var (
-	ErrZoneNotFound = fmt.Errorf("parking zone not found")
+	ErrZoneNotFound = errors.New("parking zone not found")
 )
 
 type Service interface {
